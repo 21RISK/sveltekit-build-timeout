@@ -1,0 +1,47 @@
+name: Build (reproduce hang)
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: vite build (Vite 8 + rolldown)
+    runs-on: ubuntu-latest
+    # Give it 30 minutes — enough to show the hang; real CI will time out
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Show Vite version
+        run: npx vite --version
+
+      - name: Build
+        # The build is expected to hang here on Linux with Vite 8 + rolldown.
+        # vite-plugin-sveltekit-guard processes all 10 000 routes and locks up.
+        run: |
+          echo "Starting build at $(date)"
+          npm run build
+          echo "Build finished at $(date)"
+
+      - name: Upload build artefacts (if it ever finishes)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: .svelte-kit/output
+          retention-days: 3

@@ -1,5 +1,7 @@
 # SvelteKit Build Timeout — Reproducible Example
 
+[![Build (reproduce hang)](https://github.com/21RISK/sveltekit-build-timeout/actions/workflows/build.yml/badge.svg)](https://github.com/21RISK/sveltekit-build-timeout/actions/workflows/build.yml)
+
 Reproduces the SvelteKit build hang described in [sveltejs/kit#15554](https://github.com/sveltejs/kit/issues/15554).
 
 ## The Issue
