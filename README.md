@@ -26,26 +26,30 @@ npm install
 npm run build
 ```
 
-On Linux (especially in Docker / CI), the build may hang indefinitely during the `vite-plugin-sveltekit-guard` plugin phase. On unconstrained Linux runners the build completes but the bottleneck is clearly visible in Rolldown's timing output.
+On Linux (especially in Docker / CI), the build hangs indefinitely during the `vite-plugin-sveltekit-guard` plugin phase. On unconstrained Linux runners it completes but takes **2+ minutes** — the bottleneck is clearly visible in Rolldown's plugin timing output.
 
 ## Observed Behavior
 
 | Environment            | Vite 7   | Vite 8 (rolldown) |
 |------------------------|----------|-------------------|
 | macOS                  | ✅ Fast   | ✅ Fast           |
-| Linux (GitHub runner)  | ✅ Fast   | ⏳ Very slow / hangs |
+| Linux (sandbox, 10 000 routes) | ✅ Fast | ⚠️ ~2m 12s, guard=56% |
 | Linux (Docker)         | ✅ Fast   | ❌ Hangs          |
 | Linux (CI constrained) | ✅ Fast   | ❌ Hangs          |
 
-Build output with Vite 8 / rolldown consistently shows:
+Build output with Vite 8 / rolldown (10 000 routes, Linux sandbox):
 
 ```
-[PLUGIN_TIMINGS] Warning: Your build spent significant time in plugins:
-  - vite-plugin-sveltekit-guard (81%)
-  - vite-plugin-svelte:compile (10%)
+[PLUGIN_TIMINGS] Warning: Your build spent significant time in plugins. Here is a breakdown:
+  - vite-plugin-sveltekit-guard (56%)
+  - vite-plugin-svelte:load-custom (29%)
+  - vite-plugin-sveltekit-virtual-modules (6%)
+  - vite-plugin-svelte:compile (4%)
+
+✓ built in 2m 12s
 ```
 
-`vite-plugin-sveltekit-guard` consuming 80%+ of build time is the fingerprint of the issue. In constrained environments (Docker, CI with limited IPC/threading resources) this becomes an indefinite hang rather than a slow-but-finishing build.
+`vite-plugin-sveltekit-guard` consuming 56–80%+ of build time is the fingerprint of the issue. In constrained environments (Docker, CI with limited IPC/threading resources) this becomes an indefinite hang rather than a slow-but-finishing build.
 
 ## Route Structure
 
