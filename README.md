@@ -58,29 +58,48 @@ docker run --rm --cpus 2 --memory 1g sveltekit-hang   # killed ~50s in (exit 137
 # Reproduce the GC-stall scenario (exactly 3 GB):
 docker run --rm --cpus 2 --memory 3g sveltekit-hang   # completes in ~4m 16s with GC pauses
 
-# Reproduce the CI timeout scenario (ample RAM, limited CPU):
-docker run --rm --cpus 2 --memory 6g sveltekit-hang   # ~3m 4s — exceeds 160 s step limit
-docker run --rm --cpus 1 --memory 4g sveltekit-hang   # ~5m 42s
-docker run --rm --cpus 0.5 --memory 4g sveltekit-hang # ~9m 48s
+# Reproduce the CPU-limit scenario (ample RAM):
+docker run --rm --cpus 2 --memory 6g sveltekit-hang   # ~2m 24s — exceeds 90 s step limit
+docker run --rm --cpus 1 --memory 4g sveltekit-hang   # longer
+docker run --rm --cpus 0.5 --memory 4g sveltekit-hang # even longer
 ```
 
 ### Option C — CI (this repository)
 
 The [build workflow](https://github.com/21RISK/sveltekit-build-timeout/actions/workflows/build.yml)
-runs `npm run build` on `ubuntu-latest` (2 CPUs, 7 GB RAM) with a **160-second (2m 40s)
-build-step timeout**. With adequate RAM the build takes ~3–4 minutes, reliably exceeding the limit.
-The workflow also prints `free -h` before the build so you can see the runner's available memory.
+runs `npm run build` on `ubuntu-latest` (2 CPUs, ~15 GB RAM) with a **90-second (1m 30s)
+build-step timeout**. The build consistently takes ~2m 24s (SSR phase ~70s + client phase ~78s),
+always exceeding the limit. The workflow also prints `free -h` before the build so you can
+see the runner's available memory.
 
 ## Observed Behaviour by Resource Level (Docker, Linux)
 
-### CPU timing (6 GB RAM, adequate memory)
+### CPU timing (ubuntu-latest / 2 CPUs, ~15 GB RAM)
 
-| CPU limit | Build time | Guard plugin share |
-|-----------|------------|--------------------|
-| 4 CPUs (unconstrained) | **2m 12s** | 56 % |
-| 2 CPUs (`--cpus 2`)    | **3m 04s** | 57 % |
-| 1 CPU (`--cpus 1`)     | **5m 42s** | 57 % |
-| 0.5 CPU (`--cpus 0.5`) | **9m 48s** | 56 % |
+| Environment | Build time | Notes |
+|-------------|------------|-------|
+| SSR phase | **~70s** | `vite-plugin-sveltekit-guard` is the bottleneck |
+| Client phase | **~78s** ("1m 18s") | Guard plugin: 56%, svelte:load-custom: 30% |
+| **Total** | **~2m 24s (144s)** | Exceeds 90-second step limit |
+
+Plugin timing breakdown (client phase, from actual CI run):
+
+```
+[PLUGIN_TIMINGS] Warning: Your build spent significant time in plugins. Here is a breakdown:
+  - vite-plugin-sveltekit-guard (56%)
+  - vite-plugin-svelte:load-custom (30%)
+  - vite-plugin-sveltekit-virtual-modules (6%)
+  - vite-plugin-svelte:compile (4%)
+
+✓ built in 2m 24s
+```
+
+`vite-plugin-sveltekit-guard` consuming 56 % of build time is the fingerprint of the issue.
+The plugin builds a `Map<module, Set<importer>>` import-relationship graph for every resolved
+module; across 10 000 routes × 4–5 bits-ui imports each this map becomes enormous.
+GitHub Actions' `ubuntu-latest` provides 2 CPUs and ~15 GB RAM; the build takes ~2m 24s (144 s)
+there, which exceeds the 90-second (1m 30s) step limit in the CI workflow and causes the job
+to fail.
 
 ### Memory behaviour (2 CPUs)
 
@@ -95,24 +114,6 @@ The workflow also prints `free -h` before the build so you can see the runner's 
 > **Why 3 GB is slower than 6 GB:** at the 3 GB limit Node.js runs aggressive major GC cycles
 > to stay within the limit. These cause 30–60 second stretches where the process appears frozen
 > (CPU falls to 15–20 %). This is the "stall" users observe on memory-constrained runners.
-
-Build output with Vite 8 / rolldown (10 000 routes, `--cpus 2 --memory 6g`):
-
-```
-[PLUGIN_TIMINGS] Warning: Your build spent significant time in plugins. Here is a breakdown:
-  - vite-plugin-sveltekit-guard (57%)
-  - vite-plugin-svelte:load-custom (29%)
-  - vite-plugin-sveltekit-virtual-modules (6%)
-  - vite-plugin-svelte:compile (4%)
-
-✓ built in 3m 4s
-```
-
-`vite-plugin-sveltekit-guard` consuming 57 %+ of build time is the fingerprint of the issue.
-The plugin builds a `Map<module, Set<importer>>` import-relationship graph for every resolved
-module; across 10 000 routes × 4–5 bits-ui imports each this map becomes enormous.
-GitHub Actions' `ubuntu-latest` provides 2 CPUs and 7 GB RAM; the build takes ~3–4 minutes there,
-which exceeds the 160-second (2m 40s) step limit in the CI workflow and causes the job to fail.
 
 ## Route Structure
 
