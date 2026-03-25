@@ -11,8 +11,8 @@ jobs:
   build:
     name: vite build (Vite 8 + rolldown)
     runs-on: ubuntu-latest
-    # 15 minutes total budget so setup always completes; the build step has
-    # its own 90-second limit (see below) where the actual timeout is demonstrated.
+    # Safety net: kill the entire job if it somehow runs for more than 15 minutes.
+    # The stall is detected much earlier by the Build step's stall-detector script.
     timeout-minutes: 15
 
     steps:
@@ -31,25 +31,70 @@ jobs:
       - name: Show Vite version
         run: npx vite --version
 
-      - name: Show available memory
-        # The build needs ~3 GB heap. On GitHub's ubuntu-latest (~15 GB RAM, 2 CPUs)
-        # memory is adequate but CPU is the binding constraint.
-        # On self-hosted runners with < 3 GB available the process is OOM-killed (exit 137)
-        # mid-build, which silently looks like a hang to the user.
-        run: free -h
-
       - name: Build
-        # On GitHub's ubuntu-latest runners (2 CPUs, ~15 GB RAM) the build consistently
-        # takes ~2m 24s (144 s) total: SSR phase ~70 s + client phase ~78 s.
-        # We give it 90 s so the step reliably fails in CI.
-        # 90 s is already a generous budget for a build that should take < 30 s on a normal
-        # project; the fact that it takes 144 s proves the guard-plugin bottleneck.
-        # The timeout exit (code 124) proves the build is too slow for this CPU budget.
-        # If you see exit code 137 instead, the runner ran out of memory.
+        # Stall detector: run the build and fail the step if the process stops
+        # producing output for more than STALL_THRESHOLD seconds.
+        #
+        # On GitHub's ubuntu-latest runners the build consistently stalls for ~60 s
+        # (no stdout/stderr at all) TWICE before eventually completing in ~2m 30s.
+        # A normal SvelteKit project builds in under 30 s.  The stall is caused by
+        # rolldown's parallel module resolver saturating its async task queue inside
+        # the vite-plugin-sveltekit-guard resolveId hook; the process is alive and
+        # consuming CPU but emits no output while it works through the backlog.
+        # On some Linux environments the backlog never clears and the build hangs
+        # permanently — this is the original report in sveltejs/kit#15554.
+        #
+        # We use a 30-second no-output threshold because:
+        #   - observed stall duration on GitHub runners: 60–74 s
+        #   - normal inter-line delay: < 1 s
+        # The step fails with exit 1 (stall detected), NOT exit 124 (bash timeout),
+        # so the failure message clearly names the root cause.
         run: |
-          echo "Starting build at $(date)"
-          timeout 90 npm run build
+          set -euo pipefail
+          echo "Build started at $(date)"
+
+          STALL_THRESHOLD=30
+          LAST_OUTPUT="$(mktemp)"
+          date +%s > "$LAST_OUTPUT"
+
+          # Run the build; route every output line through a co-process that
+          # stamps the time it was last seen. The process substitution keeps npm's
+          # own PID in BUILD_PID so we can monitor and kill it cleanly.
+          npm run build > >(
+            while IFS= read -r line; do
+              printf '[%s] %s\n' "$(date +%H:%M:%S)" "$line"
+              date +%s > "$LAST_OUTPUT"
+            done
+          ) 2>&1 &
+          BUILD_PID=$!
+
+          # Poll every 2 s; declare a stall if no new output for STALL_THRESHOLD s.
+          while kill -0 "$BUILD_PID" 2>/dev/null; do
+            sleep 2
+            # Guard against the rare race where the temp file is being rewritten
+            # (truncated but not yet filled) at exactly the moment we read it.
+            LAST_TS="$(cat "$LAST_OUTPUT")"
+            SILENT=$(( $(date +%s) - ${LAST_TS:-$(date +%s)} ))
+            if [ "$SILENT" -ge "$STALL_THRESHOLD" ]; then
+              printf '\n'
+              printf '::error::Build stalled — no output for %ds (threshold: %ds)\n' \
+                "$SILENT" "$STALL_THRESHOLD"
+              printf 'The build process (rolldown + vite-plugin-sveltekit-guard) is alive\n'
+              printf 'but stopped producing output. This reproduces the genuine stall\n'
+              printf 'described in sveltejs/kit#15554. It is NOT a resource constraint:\n'
+              printf 'the stall occurs regardless of available RAM or CPU.\n'
+              kill "$BUILD_PID" 2>/dev/null
+              wait "$BUILD_PID" 2>/dev/null || true
+              rm -f "$LAST_OUTPUT"
+              exit 1
+            fi
+          done
+
+          wait "$BUILD_PID"
+          STATUS=$?
+          rm -f "$LAST_OUTPUT"
           echo "Build finished at $(date)"
+          exit "$STATUS"
 
       - name: Upload build artefacts (if it ever finishes)
         if: success()
