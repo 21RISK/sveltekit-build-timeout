@@ -12,7 +12,7 @@ jobs:
     name: vite build (Vite 8 + rolldown)
     runs-on: ubuntu-latest
     # 15 minutes total budget so setup always completes; the build step has
-    # its own 3-minute limit (see below) where the actual timeout is demonstrated.
+    # its own 160-second limit (see below) where the actual timeout is demonstrated.
     timeout-minutes: 15
 
     steps:
@@ -31,11 +31,19 @@ jobs:
       - name: Show Vite version
         run: npx vite --version
 
+      - name: Show available memory
+        # The build needs ~3 GB heap. On GitHub's ubuntu-latest (7 GB RAM, 2 CPUs)
+        # memory is adequate but CPU is the binding constraint.
+        # On self-hosted runners with < 3 GB available the process is OOM-killed (exit 137)
+        # mid-build, which silently looks like a hang to the user.
+        run: free -h
+
       - name: Build
-        # On GitHub's 2-CPU runners the build takes ~3m 4s (184 s);
+        # On GitHub's 2-CPU runners the build takes ~3–4 minutes (184 s+);
         # we give it 160 s (2m 40s) so the step reliably fails in CI.
-        # On faster local machines (4 CPUs: ~2m 15s = 135 s) the step passes.
+        # On faster local machines (4 CPUs, 3 GB+: ~2m 15s = 135 s) the step passes.
         # The timeout exit (code 124) proves the build is too slow for this CPU budget.
+        # If you see exit code 137 instead, the runner ran out of memory.
         run: |
           echo "Starting build at $(date)"
           timeout 160 npm run build
