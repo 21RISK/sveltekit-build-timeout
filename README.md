@@ -4,15 +4,18 @@ Reproduces the SvelteKit build hang described in [sveltejs/kit#15554](https://gi
 
 ## The Issue
 
-Building with **Vite 8** (which ships with rollup/rolldown) hangs completely on Linux. Previously this worked on Mac and Linux with Vite 7. On Mac it builds in ~30 seconds, but hangs indefinitely in CI (Linux) and local Docker (Linux).
+Building with **Vite 8** (which ships with rolldown) hangs completely on Linux. Previously this worked on Mac and Linux with Vite 7. On Mac it builds quickly, but hangs indefinitely in CI (Linux) and local Docker (Linux).
 
 ## Reproduction Setup
 
 This project contains:
 
-- **100 Svelte components** in `src/lib/components/` — each using a different [bits-ui](https://bits-ui.com) primitive (Accordion, Button, Checkbox, Progress, Separator, Switch, Tabs, Collapsible, Avatar, Slider) with [Tailwind CSS](https://tailwindcss.com) v4 utility classes.
-- A **`/reproduction` page** (`src/routes/reproduction/+page.svelte`) that imports and renders all 100 components simultaneously.
+- **100 separate SvelteKit routes** (`src/routes/page-001/` → `src/routes/page-100/`), each being a full page that uses a different [bits-ui](https://bits-ui.com) primitive (Accordion, Button, Checkbox, Progress, Switch, Tabs, Collapsible, Avatar, Slider, Separator) with [Tailwind CSS](https://tailwindcss.com) v4 utility classes.
+- **100 shared Svelte components** in `src/lib/components/` used by the `/reproduction` index page.
+- A **`/reproduction` index page** linking to all 100 routes.
 - **Vite 8** (pinned in `package.json`) to reproduce the hang condition.
+
+The 100-route structure is the key load: SvelteKit's `vite-plugin-sveltekit-guard` must process every route during the build, and with many routes each importing bits-ui + Tailwind, the plugin's share of total build time grows dramatically — eventually hanging indefinitely in constrained environments.
 
 ## Steps to Reproduce
 
@@ -21,22 +24,37 @@ npm install
 npm run build
 ```
 
-On Linux (especially in Docker / CI), the build may hang indefinitely during the `vite-plugin-sveltekit-guard` plugin phase (which accounts for ~80% of build time according to Rolldown's `PLUGIN_TIMINGS` output).
+On Linux (especially in Docker / CI), the build may hang indefinitely during the `vite-plugin-sveltekit-guard` plugin phase. On unconstrained Linux runners the build completes but the bottleneck is clearly visible in Rolldown's timing output.
 
 ## Observed Behavior
 
-| Environment     | Vite 7   | Vite 8     |
-|-----------------|----------|------------|
-| macOS           | ✅ Fast   | ✅ Fast    |
-| Linux (Docker)  | ✅ Fast   | ❌ Hangs   |
-| Linux (CI)      | ✅ Fast   | ❌ Hangs   |
+| Environment            | Vite 7   | Vite 8 (rolldown) |
+|------------------------|----------|-------------------|
+| macOS                  | ✅ Fast   | ✅ Fast           |
+| Linux (GitHub runner)  | ✅ Fast   | ⚠️ Slow (~7s)    |
+| Linux (Docker)         | ✅ Fast   | ❌ Hangs          |
+| Linux (CI constrained) | ✅ Fast   | ❌ Hangs          |
 
-Build warnings observed with Vite 8 / rolldown:
+Build output with Vite 8 / rolldown consistently shows:
 
 ```
 [PLUGIN_TIMINGS] Warning: Your build spent significant time in plugins:
-  - vite-plugin-sveltekit-guard (80%)
+  - vite-plugin-sveltekit-guard (81%)
   - vite-plugin-svelte:compile (10%)
+```
+
+`vite-plugin-sveltekit-guard` consuming 80%+ of build time is the fingerprint of the issue. In constrained environments (Docker, CI with limited IPC/threading resources) this becomes an indefinite hang rather than a slow-but-finishing build.
+
+## Route Structure
+
+```
+src/routes/
+  page-001/+page.svelte   ← Accordion
+  page-002/+page.svelte   ← Button
+  page-003/+page.svelte   ← Checkbox
+  ...
+  page-100/+page.svelte   ← Separator
+  reproduction/+page.svelte  ← index linking to all routes
 ```
 
 ## Developing
