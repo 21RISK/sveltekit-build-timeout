@@ -10,12 +10,12 @@ Building with **Vite 8** (which ships with rolldown) hangs completely on Linux. 
 
 This project contains:
 
-- **100 separate SvelteKit routes** (`src/routes/page-001/` → `src/routes/page-100/`), each being a full page that uses a different [bits-ui](https://bits-ui.com) primitive (Accordion, Button, Checkbox, Progress, Switch, Tabs, Collapsible, Avatar, Slider, Separator) with [Tailwind CSS](https://tailwindcss.com) v4 utility classes.
-- **100 shared Svelte components** in `src/lib/components/` used by the `/reproduction` index page.
-- A **`/reproduction` index page** linking to all 100 routes.
+- **1000 separate SvelteKit routes** (`src/routes/page-001/` → `src/routes/page-1000/`), each being a full page that uses **multiple** [bits-ui](https://bits-ui.com) primitives simultaneously (4-5 per route: e.g. Accordion + Progress + Tabs + Button + Separator) with [Tailwind CSS](https://tailwindcss.com) v4 utility classes.
+- **300 shared Svelte components** in `src/lib/components/` — each using multiple bits-ui primitives — used by the `/reproduction` index page.
+- A **`/reproduction` index page** linking to all 1000 routes.
 - **Vite 8** (pinned in `package.json`) to reproduce the hang condition.
 
-The 100-route structure is the key load: SvelteKit's `vite-plugin-sveltekit-guard` must process every route during the build, and with many routes each importing bits-ui + Tailwind, the plugin's share of total build time grows dramatically — eventually hanging indefinitely in constrained environments.
+The 1000-route structure is the key load: SvelteKit's `vite-plugin-sveltekit-guard` must process every route during the build, and with many routes each importing multiple bits-ui primitives + Tailwind, the plugin's share of total build time grows dramatically — eventually hanging indefinitely in constrained environments.
 
 ## Steps to Reproduce
 
@@ -31,7 +31,7 @@ On Linux (especially in Docker / CI), the build may hang indefinitely during the
 | Environment            | Vite 7   | Vite 8 (rolldown) |
 |------------------------|----------|-------------------|
 | macOS                  | ✅ Fast   | ✅ Fast           |
-| Linux (GitHub runner)  | ✅ Fast   | ⚠️ Slow (~7s)    |
+| Linux (GitHub runner)  | ✅ Fast   | ⚠️ Slow (~19s, guard=65%) |
 | Linux (Docker)         | ✅ Fast   | ❌ Hangs          |
 | Linux (CI constrained) | ✅ Fast   | ❌ Hangs          |
 
@@ -49,12 +49,14 @@ Build output with Vite 8 / rolldown consistently shows:
 
 ```
 src/routes/
-  page-001/+page.svelte   ← Accordion
-  page-002/+page.svelte   ← Button
-  page-003/+page.svelte   ← Checkbox
+  page-001/+page.svelte   ← Accordion + Progress + Tabs + Button + Separator
+  page-002/+page.svelte   ← Switch + Checkbox + Slider + Button + Separator
+  page-003/+page.svelte   ← Avatar + Tabs + Collapsible + Separator + Button
+  page-004/+page.svelte   ← Progress + Slider + Tabs + Separator + Button
+  page-005/+page.svelte   ← Accordion + Collapsible + Avatar + Separator + Button
   ...
-  page-100/+page.svelte   ← Separator
-  reproduction/+page.svelte  ← index linking to all routes
+  page-1000/+page.svelte   ← (cycles through 5 multi-primitive templates × 200 rounds)
+  reproduction/+page.svelte  ← index linking to all 1000 routes
 ```
 
 ## Developing
