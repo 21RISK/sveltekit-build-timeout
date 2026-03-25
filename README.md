@@ -17,27 +17,45 @@ This project contains:
 - A **`/reproduction` index page** linking to all 10,000 routes.
 - **Vite 8** (pinned in `package.json`) to reproduce the hang condition.
 
-The 10,000-route structure is the key load: SvelteKit's `vite-plugin-sveltekit-guard` must process every route during the build, and with routes each importing 4–5 bits-ui primitives + Tailwind, the plugin's share of total build time grows dramatically — hanging indefinitely in constrained environments.
+The 10,000-route structure is the key load: SvelteKit's `vite-plugin-sveltekit-guard` must process every route during the build, and with routes each importing 4–5 bits-ui primitives + Tailwind, the plugin's share of total build time grows dramatically — timing out in CI environments.
 
 ## Steps to Reproduce
 
+### Option A — local (Node.js)
+
 ```sh
-npm install
+npm install --legacy-peer-deps
 npm run build
 ```
 
-On Linux (especially in Docker / CI), the build hangs indefinitely during the `vite-plugin-sveltekit-guard` plugin phase. On unconstrained Linux runners it completes but takes **2+ minutes** — the bottleneck is clearly visible in Rolldown's plugin timing output.
+### Option B — Docker (CPU-constrained, recommended)
 
-## Observed Behavior
+```sh
+# Build the image once
+docker build -t sveltekit-hang .
 
-| Environment            | Vite 7   | Vite 8 (rolldown) |
-|------------------------|----------|-------------------|
-| macOS                  | ✅ Fast   | ✅ Fast           |
-| Linux (sandbox, 10 000 routes) | ✅ Fast | ⚠️ ~2m 12s, guard=56% |
-| Linux (Docker)         | ✅ Fast   | ❌ Hangs          |
-| Linux (CI constrained) | ✅ Fast   | ❌ Hangs          |
+# Run with a single CPU — simulates constrained CI.
+# The build takes ~10 minutes and will time out on a 10-min CI limit.
+docker run --rm --cpus 1 --memory 4g sveltekit-hang
+```
 
-Build output with Vite 8 / rolldown (10 000 routes, Linux sandbox):
+### Option C — CI (this repository)
+
+The [build workflow](https://github.com/21RISK/sveltekit-build-timeout/actions/workflows/build.yml)
+runs `npm run build` on `ubuntu-latest` with a **10-minute timeout**.
+Because GitHub's shared 2-CPU runners are more constrained than the numbers below,
+the build is expected to exceed this limit and the job will be cancelled.
+
+## Observed Timing (Docker, Linux)
+
+| CPU limit | Build time | Guard plugin share |
+|-----------|------------|--------------------|
+| 4 CPUs (unconstrained) | **2m 12s** | 56 % |
+| 1 CPU (`--cpus 1`)     | **5m 42s** | 57 % |
+| 0.5 CPU (`--cpus 0.5`) | **9m 48s** | 56 % |
+| GitHub Actions (2 CPUs shared) | **> 10 min (times out)** | — |
+
+Build output with Vite 8 / rolldown (10 000 routes, `--cpus 0.5`):
 
 ```
 [PLUGIN_TIMINGS] Warning: Your build spent significant time in plugins. Here is a breakdown:
@@ -46,10 +64,13 @@ Build output with Vite 8 / rolldown (10 000 routes, Linux sandbox):
   - vite-plugin-sveltekit-virtual-modules (6%)
   - vite-plugin-svelte:compile (4%)
 
-✓ built in 2m 12s
+✓ built in 9m 48s
 ```
 
-`vite-plugin-sveltekit-guard` consuming 56–80%+ of build time is the fingerprint of the issue. In constrained environments (Docker, CI with limited IPC/threading resources) this becomes an indefinite hang rather than a slow-but-finishing build.
+`vite-plugin-sveltekit-guard` consuming 56 %+ of build time is the fingerprint of the issue.
+Build time scales roughly linearly with CPU throttle, confirming the guard plugin is the bottleneck.
+On GitHub Actions' shared runners (which deliver less effective CPU throughput than
+a dedicated 0.5-CPU Docker slice) the build exceeds a 10-minute CI limit.
 
 ## Route Structure
 
@@ -68,7 +89,7 @@ src/routes/
 ## Developing
 
 ```sh
-npm install
+npm install --legacy-peer-deps
 npm run dev
 ```
 
