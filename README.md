@@ -24,7 +24,7 @@ The 10,000-route structure is the key load: SvelteKit's `vite-plugin-sveltekit-g
 ### Option A — local (Node.js)
 
 ```sh
-npm install --legacy-peer-deps
+npm install
 npm run build
 ```
 
@@ -89,7 +89,7 @@ src/routes/
 ## Developing
 
 ```sh
-npm install --legacy-peer-deps
+npm install
 npm run dev
 ```
 

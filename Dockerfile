@@ -2,12 +2,13 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# Copy dependency manifests first for layer caching
-COPY package.json package-lock.json ./
+# Copy dependency manifests and .npmrc first for layer caching.
+# .npmrc sets legacy-peer-deps=true for the Vite 8 experimental peer range.
+COPY package.json package-lock.json .npmrc ./
 
-# --legacy-peer-deps is needed because some packages haven't yet
+# --legacy-peer-deps is set in .npmrc because some packages haven't yet
 # declared Vite 8 as a supported peer (experimental rolldown release).
-RUN npm ci --legacy-peer-deps
+RUN npm ci
 
 # Copy the rest of the source
 COPY . .
