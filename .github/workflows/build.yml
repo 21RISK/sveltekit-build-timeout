@@ -21,37 +21,4 @@ jobs:
 
       - run: npm ci
 
-      - name: Build (stall detector)
-        run: |
-          STALL_SECONDS=30
-          TMPLOG=$(mktemp)
-
-          npm run build >"$TMPLOG" 2>&1 &
-          BUILD_PID=$!
-
-          tail -f "$TMPLOG" &
-          TAIL_PID=$!
-
-          PREV_SIZE=0
-          LAST_CHANGE=$SECONDS
-
-          while kill -0 "$BUILD_PID" 2>/dev/null; do
-            sleep 1
-            CUR_SIZE=$(wc -c <"$TMPLOG" 2>/dev/null || echo 0)
-            if [ "$CUR_SIZE" != "$PREV_SIZE" ]; then
-              PREV_SIZE=$CUR_SIZE
-              LAST_CHANGE=$SECONDS
-            fi
-            IDLE=$(( SECONDS - LAST_CHANGE ))
-            if [ "$IDLE" -ge "$STALL_SECONDS" ]; then
-              echo ""
-              echo "::error::Build stalled — no output for ${IDLE}s (threshold: ${STALL_SECONDS}s)"
-              kill "$TAIL_PID" 2>/dev/null || true
-              kill "$BUILD_PID" 2>/dev/null || true
-              wait "$BUILD_PID" 2>/dev/null || true
-              exit 1
-            fi
-          done
-
-          kill "$TAIL_PID" 2>/dev/null || true
-          wait "$BUILD_PID"
+      - run: npm run build
